@@ -9,3 +9,7 @@ text {
   font-size: 10px;
 }
 
+p {
+  padding:0px;
+  margin: 0px;
+}
