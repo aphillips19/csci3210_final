@@ -138,6 +138,27 @@ function main() {
       var l = NS.linksList[i];
       if(l.type == "CL" && l.naturalCourt == x) { links.push(makeLink(l)) }
     }
+    links.sort(); // 
+    var thresholdIndex = links.length / 3;
+    var frontCounter = 0;
+    var endCounter = links.length - 1;
+    var lastUpdated = -1;
+    while (frontCounter + (links.length - 1 - endCounter) < thresholdIndex) {
+        if (Math.abs(links[frontCounter].value) > Math.abs(links[endCounter].value)) {
+            frontCounter++;
+            lastUpdated = -1;
+        }
+        else {
+            endCounter--;
+            lastUpdated = 1;
+        }
+    }
+    if (lastUpdated == 1) {
+        NS.threshold = Math.abs(links[endCounter].value);
+    }
+    else {
+        NS.threshold = Math.abs(links[frontCounter].value);
+    }
     updateSim(nodes, links);
   }
 
