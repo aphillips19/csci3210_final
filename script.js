@@ -139,6 +139,7 @@ function main() {
       if(l.type == "CL" && l.naturalCourt == x) { links.push(makeLink(l)) }
     }
     links.sort(); // 
+    /*
     var thresholdIndex = links.length / 3;
     var frontCounter = 0;
     var endCounter = links.length - 1;
@@ -159,6 +160,17 @@ function main() {
     else {
         NS.threshold = Math.abs(links[frontCounter].value);
     }
+    for (l in links) {
+      console.log(links[l].value);
+    }*/
+    var absValues = [];
+    for (l in links) {
+      absValues.push(Math.abs(links[l].value));
+    }
+    absValues.sort((a, b) => a - b);
+    NS.threshold = absValues[Math.floor(absValues.length/9) * 8];
+    console.log(absValues);
+    console.log(NS.threshold);
     updateSim(nodes, links);
   }
 
