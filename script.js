@@ -256,37 +256,23 @@ function main() {
           return "translate(" + d.x + "," + d.y + ")";
         })
   }
-  function title() {
-    var title = d3.select(".title")
-    title.append("text").attr("id", "courtname")
-      .text("COURT NAME")
-    title.append("text").text(": ")
-    title.append("text").attr("id", "courtdate")
-      .text("COURT DATE")
-    title.append("text").text(" - ")
-    title.append("text").attr("id", "civillibs")
-      .text("CL?")
-
-  }
   function updateTitle(val) {
     var title = d3.select(".title")
-    title.select("#courtname").text(val)
+    title.select("#court-name").text(val)
   }
   
-  title()
   function controls() {
     var data = d3.keys(NS.natCourt);
       console.log(data)
     var controls = d3.select(".controls")
 
     // prev button
-    var prev = controls.append("text")
-      .text("PREV ")
+    var prev = controls.select("#prev-button")
       .on("click",d => onButtonClick(-1))
 
     // select button
     var select = controls
-      .append('select')
+      .select('#natural-court-changer')
         .attr('class','select')
         .on('change',onchange)
     var options = select
@@ -296,8 +282,7 @@ function main() {
         .text(function (d) { return d; })
 
     // next button
-    var next = controls.append("text")
-      .text(" NEXT")
+    var next = controls.select("#next-button")
       .on("click", d => onButtonClick(1))
 
     // events
