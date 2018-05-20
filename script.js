@@ -3,6 +3,7 @@ NS.edgesfilepath = "data/network.csv"
 NS.nodeListfilepath = "data/nodes.csv"
 NS.ncfilepath1 = "data/courts.json"
 NS.ncfilepath2 = "data/varNaturalCourt.csv"
+NS.ideologicalfilepath = "data/justices.csv"
 NS.width = 800
 NS.height = 500
 NS.threshold = 25;
@@ -20,17 +21,25 @@ function initialize() {
   // load edges (links in d3 world) into NS.linksList
   d3.csv(NS.edgesfilepath, function(edges) {
     NS.linksList = edges;
-    // load nodes into NS.nodeList
+
+  // load nodes into NS.nodeList
     d3.csv(NS.nodeListfilepath, function(nodes) {
       NS.nodeList = nodes
-      // load natural court data, combining makeup with descriptions
+  // load natural court data, combining makeup with descriptions
       d3.json(NS.ncfilepath1, function(courts) {
         d3.csv(NS.ncfilepath2, function(courtDesc) {
-          NS.natCourt1 = courts;
-          NS.natCourt2 = courtDesc;
-          // create courtDesc hashmap from csv
+          // create courtDesc hashmap from csv; also parse start and end
+          // years from the year string
           var hash = courtDesc.reduce(function(map, obj) {
-              map[obj.naturalCourt] = {name: obj.name, date: obj.Date};
+              var date = obj.Date.split(" - ");
+              var start = date[0].split(", ")[1];
+              var end   = date[1].split(", ")[1];
+              map[obj.naturalCourt] = {
+                name: obj.name,
+                date: obj.Date,
+                yearStart: +start,
+                yearEnd: +end | 2017 // Change this if updating dataset to new year
+              };
               return map;
           }, {});
           // combine the courts with descriptions
@@ -41,8 +50,36 @@ function initialize() {
               desc: hash[c]
             }
           }
-          console.log(NS.natCourt)
-          main();
+    // load judge ideological data
+          d3.csv(NS.ideologicalfilepath, function(idata) {
+            // transform ideological data into a hashmap with each justice
+            // as the key, and an array of their posterier mean in each term
+            // as the value
+            idata = idata.reduce(function(map, obj) {
+                if(map[obj.justice] == undefined) map[obj.justice] = [];
+                // it seems that a "year" in naturalCourt = "term + 1" in here
+                map[obj.justice].push( {term: +obj.term + 1, mean: +obj.post_mn} );
+                //map[obj.justice][obj.term] = +obj.post_mn;
+                return map;
+            }, {});
+            NS.ideology = {};
+            // sum the values for each justice for each natural court
+            for(j in idata) {
+              NS.ideology[j] = {};
+              for(c in NS.natCourt) {
+                var desc = NS.natCourt[c].desc;
+                var mean = d3.mean(idata[j], function(d) {
+                  if(d.term >= desc.yearStart && d.term <= desc.yearEnd)
+                    return d.mean;
+                  else
+                    return undefined;
+                })
+                if(mean != undefined) NS.ideology[j][c] = mean;
+              }
+            }
+            // set the global variable
+            main();
+          });
         });
       });
     });
@@ -53,8 +90,10 @@ function makeSVG() {
   //Create SVG element
   var svg = d3.select(".graph")
         .append("svg")
+        .attr("class", "force-directed")
         .attr("width", NS.width)
-        .attr("height", NS.height);
+        .attr("height", NS.height)
+        // add border
   svg.append('defs');
   return svg;
 }
@@ -66,20 +105,39 @@ function getJusticeLabel(name) {
 
 function main() {
   // define scales
+  var ideology = function(d) {
+    return(NS.ideology[+d.id][NS.nc])
+  };
+
   // liberal+ conservative colors =  d3.scaleOrdinal(["#6495ed", "#fa8072"]);
   var edgeColor = function(d) {return ((d > 0) ? "#000" : "#c64841")}
-  var edgeStroke = function(d) {return Math.sqrt(Math.abs(d))}
-  /* var edgeStroke = d3.scaleLinear()
-    .domain([0, 50])
-    .range([1, 5]); */
-  var partisanColor = function(d) {return "#bbb"};
+
+  //var edgeStroke = function(d) {return Math.sqrt(Math.abs(d))}
+  var edgeStroke = d3.scaleLinear()
+
+    .domain([0, 50]) // default values - changed when updating NC
+    .range([1, 8]);
+
+  var nodeColor = function(d) {
+    // get this justice's posterior mean for the current natural court
+    var val = ideology(d);
+    if      (val < -.5) return "#6495ed";
+    else if (val > .5) return "#fa8072";
+    else               return "#bbb";
+  };
   var opacityScale = function(d) {
       var influence = Math.abs(d);
       if(influence > NS.threshold) return .7;
       else                         return .01;
   };
 
-  var xCenter = function(d) {if(d % 2 == 0) return 0; else return NS.width}
+  //var xCenter = function(d) {if(d % 2 == 0) return 0; else return NS.width}
+  var xCenter = function(d) {
+    var scale = d3.scaleLinear()
+      .domain([-3, 3])
+      .range([50, NS.width - 50]);
+    return scale(d);
+  }
 
   // define how markers are created with the proper color and opacity
   function marker(color, opacity) {
@@ -122,15 +180,24 @@ function main() {
 
   // create the simulation
   var simulation = d3.forceSimulation()
-    .force("link", d3.forceLink().id(function(d) { return d.id; }).distance(300))
-    .force("charge", d3.forceManyBody())
+    .force("link", d3.forceLink()
+        .id(function(d) { return d.id; })
+        //.distance(300)
+        // set distances based on influence
+        .distance(function(d) {
+          return (300 - Math.abs(d.value))
+        })
+    )
+    // a charge force usually keeps nodes away from each other, but because
+    // there is a link between every node (even if it doesnt meet the
+    // threshold), it's not neccesary here.
+    //.force("charge", d3.forceManyBody())
     .force("center", d3.forceCenter(NS.width / 2, NS.height / 2))
     .force("x", d3.forceX().x(function(d) {
-      return xCenter(d.id)
+      return xCenter(ideology(d))
     }))
     .alphaTarget(1)
     .on("tick", ticked);
-  
   
   // It is necessary to "construct" nodes an links from the initial data files
   // and then push them on to arrays rather than just pushing the actual nodes
@@ -142,9 +209,9 @@ function main() {
   function makeLink(x) {
     return {source: x.source, target: x.target, type: x.type, value: x.value}
   }
-
-  // However, it seems that this behavior is actually wanted for the nodes,
-  // because it allows a node to stay in its place when new ones are added
+  // However, it seems that this behavior is actually wanted for the nodes.
+  // Changing the actual data structure allows those nodes to stay in
+  // their place when updated
   /*
   function makeNode(x) {
     return {id: x.id, label: x.label, party: "liberal"}
@@ -152,9 +219,11 @@ function main() {
   
   // Set nodes and edges for the new cort
   // Takes the natural court number and civil liberties
-  function updateByNatCourt (nc, cl) {
+  function updateNodesAndLinks (nc, cl) {
     updateTitle(nc, cl)
+    // create new lists of links and nodes
     var nodes = [], links = [];
+    // add nodes
     for(var i = 0; i < NS.nodeList.length; i++) {
       var n = NS.nodeList[i];
       // reset position to center if not yet set
@@ -165,12 +234,13 @@ function main() {
           // a way to do this within the update function itself.
           // Perhaps: keep track of the nodes that exit and pick one of those
           // positions to use.
-          n.x = xCenter(n.id)
+          n.x = xCenter(ideology(n))
           n.y = NS.height/2;
         }
         nodes.push(n);
       }
     }
+    // add links
     for(var i = 0; i < NS.linksList.length; i++) {
       var l = NS.linksList[i];
       if(l.type == cl && l.naturalCourt == nc) { links.push(makeLink(l)) }
@@ -181,17 +251,19 @@ function main() {
     for (l in links) {
       absValues.push(Math.abs(links[l].value));
     }
+    // set the scale for edge widths
     absValues.sort((a, b) => a - b);
-    // threshold is a global variable bc edges are added regardless of the
-    // thereshold value; the threshold is just used to set opacities.
-    // So we could implement a way to change the threshold via a slider
-    // after the default is set to the top 1/3
     NS.threshold = absValues[Math.floor(absValues.length/9) * 8];
+    // FUTURE: we could implement a way to change the threshold via a slider
+    // after the default is set to the top 1/3, so more influences can be ween
+    // at will
+    edgeStroke.domain([0, Math.ceil(absValues[absValues.length-1])]);
+    NS.thing = absValues;
     console.log("Updating for " + nc + " (" + cl + ") with threshold " + NS.threshold)
     updateSim(nodes, links);
   }
 
-  updateByNatCourt(NS.nc, NS.cl);
+  updateNodesAndLinks(NS.nc, NS.cl);
 
   
 
@@ -212,17 +284,17 @@ function main() {
     // enter, append circle and text
     nodeEnter.append("circle")
         .attr("r", 15)
-        .attr("fill", function(d) { return partisanColor(d); })
+        .attr("fill", function(d) { return nodeColor(d); })
     nodeEnter.append("text")
       .text(function(d) {
         return d.label;
       })
       .attr('opacity', 1)
       .attr('x', 6)
-      .attr('y', 3);
+      .attr('y', 3)
+      .style("pointer-events", "none");
     nodeEnter.append("title")
       .text(function(d) { return d.id; })
-      .style("pointer-events", "none");
     node = nodeEnter.merge(node);
     node.call(d3.drag()
           .on("start", dragstarted)
@@ -237,8 +309,9 @@ function main() {
     // (3)
     link = link.enter()
       .append("line")
-      .attr("stroke-width", function(d) { return edgeStroke(d.value); })
+      .attr("stroke-width", function(d) { return edgeStroke(Math.abs(d.value)); })
       .attr("stroke-opacity",  function(d) {return opacityScale(d.value)})
+      .attr("data-comparison", function(d) {return d.value})
       .each(function(d) {
         var color = edgeColor(d.value);
         var opacity = opacityScale(d.value);
@@ -269,13 +342,14 @@ function main() {
       .append('text')
       .style("pointer-events", "none")
       .attrs({
+
           'class': 'edgelabel',
           'id': function (d, i) {return 'edgelabel' + i},
           'font-size': 10,
           'fill': '#666',
           'opacity': function(d) { return opacityScale(d.value)},
           'visibility': function(d) { return (opacityScale(d.value) > .1 ? "visible" : "hidden")},
-          'dy': function(d) { return -1 * edgeStroke(d.value) }
+          'dy': function(d) { return -1 * edgeStroke(Math.abs(d.value)) }
       })
       .merge(edgelabels)
   edgelabels.append('textPath')
@@ -332,6 +406,7 @@ function main() {
   function updateTitle(nc, cl) {
     var title = d3.select(".title")
     var description = NS.natCourt[nc].desc
+    if(cl == "CL") cl = "Civil Liberties"; else cl = "Non-Civil Liberties";
     title.select("#court-number").text(nc)
     title.select("#court-name").text(description.name)
     title.select("#court-date").text(description.date)
@@ -339,27 +414,22 @@ function main() {
   }
   
   function controls() {
+    // Create slider
     var data = d3.keys(NS.natCourt);
-    var controls = d3.select(".controls")
+    var margin = {right: 150, left: 20, top: 10}
+    var svg = d3.select(".slider").append("svg")
+      .attr("width", NS.width - margin.right)
+      .attr("height", 100);
 
-    // Implement the SLIDER
-
-    var svg = d3.select(".controls").append("svg")
-      .attr("width", NS.width)
-      .attr("height", NS.height);
-
-    var margin = {right: 50, left: 50, top: 10}
     // create a range of x values from the courts
     var courtKeys = d3.keys(NS.natCourt)
     var range = [];
     for (key in d3.keys(NS.natCourt)) {
       range[key] = key * ((NS.width - margin.right - margin.left)/courtKeys.length)
     }
-    console.log(range)
     var x = d3.scaleOrdinal()
         .domain(courtKeys)
         .range(range)
-    NS.test = x;
 
     var slider = svg.append("g")
         .attr("class", "slider")
@@ -385,20 +455,13 @@ function main() {
       .data(courtKeys)
       .enter().append("g")
         .attr("class", "tick-text")
-        .attr("transform", function(d) { return "translate(" + (x(d) - 5) + ", " + margin.top/2 + ")" })
+        .attr("transform", function(d) { return "translate(" + (x(d) - 5) +", -5)" })
       .append("text")
-        .attr("text-anchor", "middle")
+        .attr("text-anchor", "start")
         .attr("transform", "rotate(90)")
         .attr("fill", "#333")
-        .text(function(d) { return d; });
-/*
-    .attr("y", 0)
-    .attr("x", 9)
-    .attr("dy", ".35em")
-    .attr("transform", "rotate(90)")
-    .style("text-anchor", "start");
-*/
-
+        // set the text to the longer name (i.e. Vinson 3 instead of 1301)
+        .text(function(d) { return NS.natCourt[d].desc.name; });
 
     var handle = slider.insert("circle", ".track-overlay")
         .attr("class", "handle")
@@ -417,53 +480,28 @@ function main() {
         // update handle postion
         handle.attr("cx", rounded);
         // get corresponding court & update
-        updateByNatCourt(NS.nc, NS.cl);
+        updateNodesAndLinks(NS.nc, NS.cl);
       }
     }
 
+    // Create button
+    var button = d3.select(".button").append("input")
+      .attr("type", "button")
+      .attr("name", "toggle")
+      .attr("value", "Toggle Civil Liberties")
+      .attr("onclick", "buttonPressed()")
 
-
-
-    // OLD STUFF
-    /*
-    // prev button
-    var prev = controls.select("#prev-button")
-      .on("click",d => onButtonClick(-1))
-
-    // select button
-    var select = controls
-      .select('#natural-court-changer')
-        .attr('class','select')
-        .on('change',onchange)
-    var options = select
-      .selectAll('option')
-      .data(data).enter()
-      .append('option')
-        .text(function (d) { return d; })
-
-    // next button
-    var next = controls.select("#next-button")
-      .on("click", d => onButtonClick(1))
-
-    // events
-    function onchange() {
-      val = select.property('value')
-      console.log(val)
-      updateByNatCourt(val, "CL")
-      updateTitle(val, "CL")
+    var buttonPressed = function () {
+      NS.cl = (NS.cl=="CL") ? "nonCL" : "CL";
+      updateNodesAndLinks(NS.nc, NS.cl);
     }
+    // hacky way to get the button press function in the global scope, pt. 1
+    return buttonPressed;
 
-    function onButtonClick(incr) {
-      val = select.property('value')
-      i = data.indexOf(val) + incr
-      select.property('value', data[i])
-      select.call(onchange)
-    }
-    */
   }
 
-
-  controls();
+  // hacky way to get the button press function in the global scope, pt. 2
+  NS.buttonPressed = controls();
 
   function dragstarted(d) {
     if (!d3.event.active) simulation.alphaTarget(0.3).restart();
@@ -483,75 +521,9 @@ function main() {
   }
 }
 
-initialize()
-
-// Custom force
-/*
-var forcePartiality = function() {
-  var strength = constant(0.1),
-      nodes,
-      strengths,
-      xz;
-
-  if (typeof x !== "function") x = constant(x == null ? 0 : +x);
-
-  function force(alpha) {
-    for (var i = 0, n = nodes.length, node; i < n; ++i) {
-      node = nodes[i], node.vx += (xz[i] - node.x) * strengths[i] * alpha;
-    }
-  }
-
-  function initialize() {
-    if (!nodes) return;
-    var i, n = nodes.length;
-    strengths = new Array(n);
-    xz = new Array(n);
-    for (i = 0; i < n; ++i) {
-      strengths[i] = isNaN(xz[i] = +x(nodes[i], i, nodes)) ? 0 : +strength(nodes[i], i, nodes);
-    }
-  }
-
-  force.initialize = function(_) {
-    nodes = _;
-    initialize();
-  };
-
-  force.strength = function(_) {
-    return arguments.length ? (strength = typeof _ === "function" ? _ : constant(+_), initialize(), force) : strength;
-  };
-
-  force.x = function(_) {
-    return arguments.length ? (x = typeof _ === "function" ? _ : constant(+_), initialize(), force) : x;
-  };
-
-  return force;
-}*/
-
-
-// https://oli.me.uk/2013/06/08/searching-javascript-arrays-with-a-binary-search/
-function binaryIndexOf(searchElement) {
-    'use strict';
- 
-    var minIndex = 0;
-    var maxIndex = this.length - 1;
-    var currentIndex;
-    var currentElement;
- 
-    while (minIndex <= maxIndex) {
-        currentIndex = (minIndex + maxIndex) / 2 | 0;
-        currentElement = this[currentIndex];
- 
-        if (currentElement < searchElement) {
-            minIndex = currentIndex + 1;
-        }
-        else if (currentElement > searchElement) {
-            maxIndex = currentIndex - 1;
-        }
-        else {
-            return currentIndex;
-        }
-    }
- 
-    return -1;
+// hacky way to get the button press function in the global scope, pt. 1
+function buttonPressed() {
+  NS.buttonPressed.call()
 }
-Array.prototype.binaryIndexOf = binaryIndexOf;
+
+initialize()

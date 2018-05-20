@@ -1,7 +1,7 @@
 
-.nodes circle {
+.node circle {
   stroke: #fff;
-  stroke-width: 1.5px;
+  stroke-width: 2.5px;
 }
 
 text {
@@ -14,13 +14,26 @@ p {
   margin: 0px;
 }
 
+.force-directed {
+  border: 1px solid #aaa;
+}
+
 .title p {
   display: inline-block;
 }
-/*
-.controls p {
-  display: inline-block;
-}*/
+.controls  {
+  vertical-align: top;
+  display: float;
+  width: 700px;
+}
+.slider {
+  width: 650px;
+  float: left;
+}
+.button {
+  width: 50px;
+  float: left;
+}
 
 /* Slider stuff */
 .ticks {
